@@ -26,7 +26,6 @@ type FrameHeader struct {
 type Frame interface {
 	Header() FrameHeader
 	Serialize() ([]byte, error)
-	parse(payload []byte) error
 }
 
 // 数据帧
@@ -97,6 +96,10 @@ func ParseFrameHeader(data []byte) (FrameHeader, error) {
 		Flags:    data[4],
 		StreamID: binary.BigEndian.Uint32(data[5:9]) & (1<<31 - 1),
 	}, nil
+}
+
+func (h *FrameHeader) Header() FrameHeader {
+	return *h
 }
 
 // HeaderFrame 序列化
