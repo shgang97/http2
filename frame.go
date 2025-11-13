@@ -345,3 +345,153 @@ func NewSettingsFrame(settings []Setting) *SettingsFrame {
 		Settings: settings,
 	}
 }
+
+// =========================== PingFrame ===========================
+func (f *PingFrame) Serialize() ([]byte, error) {
+	if f.StreamID != 0 {
+		return nil, fmt.Errorf("SETTINGS_FRAME_ERROR: streamID must be zero")
+	}
+	f.Length = 8 // Ping 帧规定8个字节数据
+	header := f.FrameHeader.Serialize()
+
+	// 欲分配完整帧
+	offset := len(header)
+	frame := make([]byte, offset+8)
+	copy(frame, header)
+	copy(frame[offset:], f.Data[:])
+	return frame, nil
+}
+
+func ParsePingFrame(header *FrameHeader, payload []byte) (*PingFrame, error) {
+	if header.Type != FramePing {
+		return nil, fmt.Errorf("PING_FRAME_ERROR: expected frame type %d, got %d")
+	}
+	if header.StreamID != 0 {
+		return nil, fmt.Errorf("PING_FRAME_ERROR: streamID must be zero")
+	}
+	if len(payload) != 8 {
+		return nil, fmt.Errorf("PING_FRAME_ERROR: invalid payload length: %d", len(payload))
+	}
+	frame := &PingFrame{
+		FrameHeader: *header,
+	}
+	copy(frame.Data[:], payload)
+	return frame, nil
+}
+
+// =========================== WindowUpdateFrame ===========================
+func (f *WindowUpdateFrame) Serialize() ([]byte, error) {
+	if f.WindowSizeIncrement == 0 || f.WindowSizeIncrement > 0x7FFFFFFF {
+		return nil, fmt.Errorf("WINDOW_UPDATE_FRAME_ERROR: invalid window size: %d", f.WindowSizeIncrement)
+	}
+	f.Length = 4
+	header := f.FrameHeader.Serialize()
+	offset := len(header)
+	frame := make([]byte, offset+4)
+	copy(frame, header)
+	binary.BigEndian.PutUint32(frame[offset:], f.WindowSizeIncrement&0x7FFFFFFF)
+	return frame, nil
+}
+
+func ParseWindowUpdateFrame(header *FrameHeader, payload []byte) (*WindowUpdateFrame, error) {
+	if len(payload) < 4 {
+		return nil, fmt.Errorf("WINDOW_UPDATE_FRAME_ERROR: invalid payload length: %d", len(payload))
+	}
+	if header.Type != FrameWindowUpdate {
+		return nil, fmt.Errorf("WINDOW_UPDATE_FRAME_ERROR: expected frame type %d, got %d", FrameWindowUpdate, header.Type)
+	}
+	if header.Length != 4 {
+		return nil, fmt.Errorf("WINDOW_UPDATE_FRAME_ERROR: invalid length: %d", header.Length)
+	}
+	increment := binary.BigEndian.Uint32(payload) & 0x7FFFFFFF
+	if increment == 0 {
+		return nil, fmt.Errorf("WINDOW_UPDATE_FRAME_ERROR: invalid increment value: %d", increment)
+	}
+	return &WindowUpdateFrame{
+		FrameHeader:         *header,
+		WindowSizeIncrement: increment,
+	}, nil
+}
+
+// =========================== RSTStreamFrame ===========================
+type RSTStreamFrame struct {
+	FrameHeader
+	ErrorCode uint32
+}
+
+func (f *RSTStreamFrame) Serialize() ([]byte, error) {
+	if f.ErrorCode == 0 {
+		return nil, fmt.Errorf("RST_STREAM_FRAME_ERROR: streamID must be greater than zero")
+	}
+	f.Length = 4
+	header := f.FrameHeader.Serialize()
+	offset := len(header)
+	frame := make([]byte, offset+4)
+	copy(frame, header)
+	binary.BigEndian.PutUint32(frame[offset:], f.ErrorCode)
+	return frame, nil
+}
+
+func ParseRSTStreamFrame(header *FrameHeader, payload []byte) (*RSTStreamFrame, error) {
+	if len(payload) < 4 {
+		return nil, fmt.Errorf("RST_STREAMFRAME_ERROR: invalid payload length: %d", len(payload))
+	}
+	if header.Type != FrameRSTStream {
+		return nil, fmt.Errorf("RST_STREAMFRAME_ERROR: expected frame type %d, got %d", FrameRSTStream, header.Type)
+	}
+	if header.Length != 4 {
+		return nil, fmt.Errorf("RST_STREAMFRAME_ERROR: invalid length: %d", header.Length)
+	}
+	return &RSTStreamFrame{
+		FrameHeader: *header,
+		ErrorCode:   binary.BigEndian.Uint32(payload),
+	}, nil
+}
+
+type GoAwayFrame struct {
+	FrameHeader
+	LastStreamID uint32
+	ErrorCode    uint32
+	DebugData    []byte
+}
+
+func (f *GoAwayFrame) Serialize() ([]byte, error) {
+	if f.StreamID != 0 {
+		return nil, fmt.Errorf("GOWAYFRAME_FRAME_ERROR: streamID must be zero")
+	}
+	f.Length = 8 + uint32(len(f.DebugData))
+	header := f.FrameHeader.Serialize()
+	offset := len(header)
+	frame := make([]byte, offset+int(f.Length))
+	copy(frame, header)
+	binary.BigEndian.PutUint32(frame[offset:offset+4], f.LastStreamID&0x7FFFFFFF)
+	offset += 4
+	binary.BigEndian.PutUint32(frame[offset+4:offset+8], f.ErrorCode)
+	offset += 4
+	copy(frame[offset:], f.DebugData)
+	return frame, nil
+}
+
+func ParseGoAwayFrame(header *FrameHeader, payload []byte) (*GoAwayFrame, error) {
+	if len(payload) < 8 {
+		return nil, fmt.Errorf("GOWAYFRAME_ERROR: invalid payload length: %d", len(payload))
+	}
+	if header.Type != FrameGoWay {
+		return nil, fmt.Errorf("GOWAYFRAME_ERROR: expected frame type %d, got %d", FrameGoWay, header.Type)
+	}
+	if header.StreamID != 0 {
+		return nil, fmt.Errorf("GOWAYFRAME_ERROR: streamID must be zero")
+	}
+	lastStreamID := binary.BigEndian.Uint32(payload[:4]) & 0x7FFFFFFF
+	errorCode := binary.BigEndian.Uint32(payload[4:8])
+	debugData := make([]byte, header.Length-8)
+	if header.Length > 8 {
+		copy(debugData, payload[8:header.Length])
+	}
+	return &GoAwayFrame{
+		FrameHeader:  *header,
+		LastStreamID: lastStreamID,
+		ErrorCode:    errorCode,
+		DebugData:    debugData,
+	}, nil
+}
