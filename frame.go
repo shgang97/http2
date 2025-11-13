@@ -68,6 +68,7 @@ type WindowUpdateFrame struct {
 	WindowSizeIncrement uint32
 }
 
+// =========================== FrameHeader ===========================
 // HeaderFrame 序列化
 func (h *FrameHeader) Serialize() []byte {
 	buf := make([]byte, 9)
@@ -86,11 +87,11 @@ func (h *FrameHeader) Serialize() []byte {
 }
 
 // 解析帧头部
-func ParseFrameHeader(data []byte) (FrameHeader, error) {
+func ParseFrameHeader(data []byte) (*FrameHeader, error) {
 	if len(data) < 9 {
-		return FrameHeader{}, fmt.Errorf("FRAME_SIZE_ERROR: frame header must be 9 bytes, got %d", len(data))
+		return &FrameHeader{}, fmt.Errorf("FRAME_SIZE_ERROR: frame header must be 9 bytes, got %d", len(data))
 	}
-	return FrameHeader{
+	return &FrameHeader{
 		Length:   uint32(data[0])<<16 | uint32(data[1])<<8 | uint32(data[2]),
 		Type:     data[3],
 		Flags:    data[4],
@@ -102,6 +103,7 @@ func (h *FrameHeader) Header() FrameHeader {
 	return *h
 }
 
+// =========================== HeadersFrame ===========================
 // HeaderFrame 序列化
 func (f *HeadersFrame) Serialize() ([]byte, error) {
 	if f.StreamID == 0 {
@@ -166,20 +168,10 @@ func (f *HeadersFrame) Serialize() ([]byte, error) {
 }
 
 // 解析 HeadersFrame
-func ParseHeadersFrame(data []byte) (*HeadersFrame, error) {
-	if len(data) < 9 {
-		return nil, fmt.Errorf("HEADERS_FRAME_ERROR: frame must be at least 9 bytes, got %d", len(data))
-	}
-
-	// 解析帧头
-	header, err := ParseFrameHeader(data[:9])
-	if err != nil {
-		return nil, err
-	}
+func ParseHeadersFrame(header *FrameHeader, payload []byte) (*HeadersFrame, error) {
 	frame := &HeadersFrame{
-		FrameHeader: header,
+		FrameHeader: *header,
 	}
-	payload := data[9 : 9+header.Length]
 	offset := 0
 
 	// 处理填充
@@ -221,6 +213,7 @@ func hasPriority(flags uint8) bool {
 	return flags&FlagPriority != 0
 }
 
+// =========================== DataFrame ===========================
 // DataFram 序列化
 func (f *DataFrame) Serialize() ([]byte, error) {
 	// 验证数据
@@ -264,24 +257,14 @@ func (f *DataFrame) Serialize() ([]byte, error) {
 	return frame, nil
 }
 
-func ParseDataFrame(data []byte) (*DataFrame, error) {
-	if len(data) < 9 {
-		return nil, fmt.Errorf("DATA_FRAME_ERROR: data frame must be at least 9 bytes, got %d", len(data))
-	}
-
-	// 解析帧头
-	header, err := ParseFrameHeader(data[:9])
-	if err != nil {
-		return nil, err
-	}
+func ParseDataFrame(header *FrameHeader, payload []byte) (*DataFrame, error) {
 	if header.Type != FrameData {
 		return nil, fmt.Errorf("DATA_FRAME_ERROR: expected frame type %d, got %d", FrameData, header.Type)
 	}
 	frame := &DataFrame{
-		FrameHeader: header,
+		FrameHeader: *header,
 	}
 	// 解析载荷
-	payload := data[9 : 9+header.Length]
 	offset := 0
 
 	// 处理填充
@@ -307,6 +290,7 @@ func ParseDataFrame(data []byte) (*DataFrame, error) {
 	return frame, nil
 }
 
+// =========================== SettingsFrame ===========================
 // SettingFrame 序列化
 func (f *SettingsFrame) Serialize() ([]byte, error) {
 	size := len(f.Settings)
@@ -324,6 +308,29 @@ func (f *SettingsFrame) Serialize() ([]byte, error) {
 		offset += 6
 	}
 	return frame, nil
+}
+
+// SettingsFrame 解析
+func ParseSettingsFrame(header *FrameHeader, payload []byte) (*SettingsFrame, error) {
+	if header.StreamID != 0 {
+		return nil, fmt.Errorf("SETTINGS_FRAME_ERROR: streamID must be zero")
+	}
+
+	if len(payload)%6 != 0 {
+		return nil, fmt.Errorf("SETTINGS_FRAME_ERROR: invalid payload length")
+	}
+	settings := make([]Setting, len(payload)/6)
+	for i := 0; i < len(settings); i++ {
+		offset := i * 6
+		settings[i] = Setting{
+			ID:    binary.BigEndian.Uint16(payload[offset : offset+2]),
+			Value: binary.BigEndian.Uint32(payload[offset+2 : offset+6]),
+		}
+	}
+	return &SettingsFrame{
+		FrameHeader: *header,
+		Settings:    settings,
+	}, nil
 }
 
 // 创建设置帧
